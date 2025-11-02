@@ -1,2 +1,5 @@
 models/ESN/__pycache__
 models/MLP/__pycache__
+models/SNN/data
+models/SNN/__pycache__
+models/SNN/kernels_after.png
