@@ -3,3 +3,7 @@ models/MLP/__pycache__
 models/SNN/data
 models/SNN/__pycache__
 models/SNN/kernels_after.png
+models/ANN/__pycache__
+models/ANN/data
+models/CNN/__pycache__
+models/CNN/data
