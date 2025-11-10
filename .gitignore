@@ -7,3 +7,5 @@ models/ANN/__pycache__
 models/ANN/data
 models/CNN/__pycache__
 models/CNN/data
+models/UNET/data
+models/UNET/__pycache__

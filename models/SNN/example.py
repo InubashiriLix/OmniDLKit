@@ -29,24 +29,26 @@ class Cfg:
 
     # ====== 时序编码（泊松） ======
     T: int = 80  # 每张图重复的时间步数
-    rate_gain: float = 0.20  # 每步发放概率≈ pix * rate_gain
-    rate_bias: float = 0.02  # 给低灰度一点底噪，避免全静默
+    rate_gain: float = 0.30  # 每步发放概率≈ pix * rate_gain (提高以增加输入)
+    rate_bias: float = 0.05  # 给低灰度一点底噪，避免全静默
 
     # ====== LIF + STDP ======
     out_channels: int = 16
     ksize: int = 5
     v_th: float = 0.8  # 正常训练阈值
-    warmup_v_th: float = 0.5  # 热启动阈值（点火用）
+    warmup_v_th: float = 0.4  # 热启动阈值（点火用）降低以更容易触发
     warmup_batches: int = 10
     t_ref: float = 2.0
     tau_m: float = 10.0
     tau_s: float = 5.0
     tau_pre: float = 20.0
     tau_post: float = 20.0
-    eta_plus: float = 2e-3
-    eta_minus: float = 1e-3
-    stdp_norm: bool = False
-    w_scale: float = 0.2
+    eta_plus: float = 5e-4  # 降低学习率以防止权重快速衰减
+    eta_minus: float = 2e-4  # LTD 学习率要小于 LTP
+    wmin: float = 0.0  # 权重下界
+    wmax: float = 1.5  # 权重上界（增大以允许更强的突触）
+    stdp_norm: bool = True  # 启用归一化以稳定学习
+    w_scale: float = 0.5  # 增大初始权重范围
 
     # ====== 训练日志/时长 ======
     train_batches: int = 200
@@ -117,16 +119,17 @@ def make_model(cfg: Cfg) -> LIFConv2dSTDP:
         tau_post=cfg.tau_post,
         eta_plus=cfg.eta_plus,
         eta_minus=cfg.eta_minus,
+        wmin=cfg.wmin,
+        wmax=cfg.wmax,
         stdp_norm=cfg.stdp_norm,
         w_scale=cfg.w_scale,
         device=torch.device(cfg.device),
     )
 
-    # —— 点火前检查：若权重接近全 0，则强制正数初始化 —— #
+    # —— 点火前检查：强制正数初始化，避免被 wmin=0 clamp 到 0 —— #
     with torch.no_grad():
-        wmin, wmax = float(lif.W.min()), float(lif.W.max())
-        if abs(wmax - wmin) < 1e-8 or (abs(wmax) < 1e-7 and abs(wmin) < 1e-7):
-            lif.W.uniform_(0.08, 0.18)
+        # 初始化到较大的正数范围，确保有足够的电流产生脉冲
+        lif.W.uniform_(0.3, 0.6)
         # 再打印一次确保不是 0
         wmin2, wmax2 = float(lif.W.min()), float(lif.W.max())
         print(f"[init] W range = [{wmin2:.3f}, {wmax2:.3f}]")
@@ -156,23 +159,23 @@ def _ignite_if_needed(
         return spikes
 
     # 尝试1：进一步降阈值
-    _set_thresh(lif, 0.4)
+    _set_thresh(lif, 0.3)
     lif.reset_states(B, (H, W), device=torch.device(cfg.device))
     spikes, _, _ = lif.run(S)
     spk_sum = int(spikes.to(torch.int).sum().item())
     if spk_sum > 0:
-        print("[ignite] success by lowering threshold to 0.4")
+        print(f"[ignite] success by lowering threshold to 0.3 (spikes={spk_sum})")
         return spikes
 
     # 尝试2：强制正数重初始化 + 更低阈值
     with torch.no_grad():
-        lif.W.uniform_(0.10, 0.30)
-    _set_thresh(lif, 0.35)
+        lif.W.uniform_(0.4, 0.8)
+    _set_thresh(lif, 0.25)
     lif.reset_states(B, (H, W), device=torch.device(cfg.device))
     spikes, _, _ = lif.run(S)
     spk_sum = int(spikes.to(torch.int).sum().item())
     if spk_sum > 0:
-        print("[ignite] success by reinit W∈[0.10,0.30] & v_th=0.35")
+        print(f"[ignite] success by reinit W∈[0.4,0.8] & v_th=0.25 (spikes={spk_sum})")
         return spikes
 
     print("[ignite] still no spikes — 请检查 STDP 类是否被其它地方改写/覆盖为全 0 权重")
